@@ -55,6 +55,7 @@ import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
 import javax.crypto.NoSuchPaddingException;
 import javax.crypto.SecretKey;
+import javax.crypto.spec.IvParameterSpec;
 
 import static android.Manifest.permission.READ_CONTACTS;
 
@@ -131,6 +132,14 @@ public class LoginActivity extends AppCompatActivity implements LoaderCallbacks<
             }
         });
 
+        Button mAuthorizedButton = findViewById(R.id.button3);
+        mAuthorizedButton.setOnClickListener(new OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                attemptFingerprintLogin();
+            }
+        });
+
         mLoginFormView = findViewById(R.id.login_form);
         mProgressView = findViewById(R.id.login_progress);
 
@@ -150,17 +159,7 @@ public class LoginActivity extends AppCompatActivity implements LoaderCallbacks<
     }
 
 
-    /** Callbacks **/
-    @Override
-    public void authenticationFailed(String error) {
 
-    }
-
-    @TargetApi(Build.VERSION_CODES.M)
-    @Override
-    public void authenticationSucceeded(FingerprintManager.AuthenticationResult result) {
-        Toast.makeText(this,"Authentication succeeded", Toast.LENGTH_LONG).show();
-    }
 
 
     /** Private methods **/
@@ -256,6 +255,21 @@ public class LoginActivity extends AppCompatActivity implements LoaderCallbacks<
      * If there are form errors (invalid email, missing fields, etc.), the
      * errors are presented and no actual login attempt is made.
      */
+
+    private void attemptFingerprintLogin(){
+        if (!testFingerPrintSettings()){
+            return;
+        }
+
+        if (!usersRegistered()){
+            return;
+        }
+
+        showProgress(true);
+        mAuthTask = new UserLoginTask();
+        mAuthTask.execute((Void)null);
+    }
+
     private void attemptRegister() {
 
         if(!testFingerPrintSettings()){
@@ -410,7 +424,53 @@ public class LoginActivity extends AppCompatActivity implements LoaderCallbacks<
         int IS_PRIMARY = 1;
     }
 
+    /** Callbacks **/
+    @Override
+    public void authenticationFailed(String error) {
+        Toast.makeText(this,"DIE MOTHERFUCKER, DIE, DIE!!!!", Toast.LENGTH_LONG).show();
+    }
 
+    @TargetApi(Build.VERSION_CODES.M)
+    @Override
+    public void authenticationSucceeded(FingerprintManager.AuthenticationResult result) {
+        Toast.makeText(this,"Authentication succeeded", Toast.LENGTH_LONG).show();
+        cipher = result.getCryptoObject().getCipher();
+
+        if(encrypting){
+            String textToEncrypt = mPasswordView.getText().toString();
+            encryptString(textToEncrypt);
+            mEmailView.setText("");
+            mPasswordView.setText("");
+        } else {
+            String encryptedText = sharedPreferences.getString(PREFERENCES_KEY_PASS,"");
+            decryptString(encryptedText);
+        }
+    }
+
+    public void encryptString(String initialText){
+        try {
+            byte[] bytes = cipher.doFinal(initialText.getBytes());
+            String encryptedText = Base64.encodeToString(bytes, Base64.NO_WRAP);
+
+            SharedPreferences.Editor editor = sharedPreferences.edit();
+            editor.putString(PREFERENCES_KEY_PASS,encryptedText);
+            editor.commit();
+            Toast.makeText(this,encryptedText,Toast.LENGTH_LONG).show();
+        } catch (Exception e){
+            Log.d("ERROR", "ENCRYPTING PASSWORD");
+        }
+    }
+
+    public void decryptString(String cipherText){
+        try {
+            byte[] bytes = Base64.decode(cipherText,Base64.NO_WRAP);
+            String finalText = new String(cipher.doFinal(bytes));
+            Toast.makeText(this,finalText,Toast.LENGTH_LONG).show();
+
+        } catch (Exception e){
+            Log.d("ERROR", "DECRYPTING PASSWORD");
+        }
+    }
 
     /**
      * Represents an asynchronous login/registration task used to authenticate
@@ -422,6 +482,13 @@ public class LoginActivity extends AppCompatActivity implements LoaderCallbacks<
 
         private final String mEmail;
         private final String mPassword;
+
+        UserLoginTask() {
+            mRegister = false;
+            mEmail = null;
+            mPassword = null;
+            fingerprintHelper = new FingerprintHelper(LoginActivity.this);
+        }
 
         UserLoginTask(String email, String password) {
             mEmail = email;
@@ -453,6 +520,11 @@ public class LoginActivity extends AppCompatActivity implements LoaderCallbacks<
                 encrypting = true;
 
                 if (!initCipher(Cipher.ENCRYPT_MODE)){
+                    return false;
+                }
+            } else {
+                encrypting = false;
+                if (!initCipher(Cipher.DECRYPT_MODE)){
                     return false;
                 }
             }
@@ -510,6 +582,10 @@ public class LoginActivity extends AppCompatActivity implements LoaderCallbacks<
                     SharedPreferences.Editor editor = sharedPreferences.edit();
                     editor.putString(PREFERENCES_KEY_IV, Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP));
                     editor.commit();
+                } else {
+                    byte[] iv = Base64.decode(sharedPreferences.getString(PREFERENCES_KEY_IV,""),Base64.NO_WRAP);
+                    IvParameterSpec ivspec = new IvParameterSpec(iv);
+                    cipher.init(mode, keyspec, ivspec);
                 }
                 return true;
             } catch (KeyPermanentlyInvalidatedException e) {
